@@ -1,0 +1,346 @@
+---
+title: "Titanic"
+author: "Vasanth Kailasam"
+date: "1/22/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library('dplyr')
+library('ggplot2')
+library('ggthemes')
+library('scales')
+library('randomForest')
+library('rpart')
+library('mice')
+library('nlme')
+```
+
+## Reading the data
+I am going to combine the train and test data to create a complete dataset for analysis. 
+```{r }
+traindata <- read.csv('titanic_training.csv', stringsAsFactors = F)
+testdata  <- read.csv('titanic_test.csv', stringsAsFactors = F)
+full <- bind_rows(traindata, testdata)
+nrow(full)
+```
+
+## Analysis
+Now that we have our complete dataset, let's start our analysis. As we all know already, children, women and passengers from the first class were given preference during evacuation. Let us confirm this first through our analysis. 
+
+##Hypothesis 1 : 
+Percentage survival among children, women, men, first class passeners, second class passengers, and third class passengers. 
+(For the purposes of our analysis, let us treat everyone below age 12 as children)
+```{r}
+totalchildren <- traindata %>%
+  filter(Age <= 12)
+#No of children Survived vs deceased
+table(totalchildren$Survived)
+adulttable <- traindata %>%
+  filter(Age > 12)
+#Survival of men and women 
+table(adulttable$Sex, adulttable$Survived)
+#Survival of passengers of different class
+table(adulttable$Pclass, adulttable$Survived)
+
+```
+
+From the table output itself we can see that the commonly held view of women, children and first class passengers given preference is true.Let's plot these values in a graph to get an accurate percentage. 
+
+## Children Survival Percentage
+```{r}
+ggplot(totalchildren, aes(x=Survived)) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(name = "Percentage", labels=percent)+
+  theme_few()
+```
+
+
+##Women Survival Percentage
+```{r}
+womentable <- adulttable %>%
+  filter(Sex =="female")
+mentable <- adulttable %>%
+  filter(Sex =="male")
+ggplot(womentable, aes(x=Sex, fill=factor(Survived))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)), position ='dodge')+
+  scale_y_continuous(name = "Percentage", labels=percent)+
+  theme_few()
+```
+
+
+
+From the graph we can see that around 80% of adolescent and adult women were rescued, while 20% died. 
+
+##Men Survival Percentage
+Now plotting the same graph for men. 
+```{r}
+ggplot(mentable, aes(x=Sex, fill=factor(Survived))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)), position ='dodge')+
+  scale_y_continuous(name = "Percentage", labels=percent)+
+  theme_few()
+```
+We can see that the stats are reversed here. Aroudn 80% of adolescent and adult men died, while only less 20% were rescued.
+
+##Survival based on class
+```{r}
+ggplot(adulttable, aes(x=Pclass, fill=factor(Survived))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)), position ='dodge')+
+  scale_y_continuous(name = "Percentage", labels=percent)+
+  theme_few()
+```
+
+Now that we have tested our hypothesis, let's go on to see if any other variable has this kind of influence on survival. We will see if port of embarkment has an impact on survival. 
+
+## Survival based on port of embarkment
+```{r}
+ggplot(adulttable, aes(x=Embarked, fill=factor(Survived))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)), position ='dodge')+
+  scale_y_continuous(name = "Percentage", labels=percent)+
+  theme_few()
+```
+
+## Hypothesis 2:
+This shows that those who embarked on SouthAmpton has lesser chances of survival than those who embarked at other ports. But this may be a false reasoning, because SouthAmpton was the beginning place and most people who boarded there were adult men and third class passengers. To confirm this, let us see if the distribution of sexes and classes among people from different port of embarkment. 
+
+```{r}
+##Plotting embarkment and Sex
+ggplot(adulttable, aes(Embarked, fill=factor(Sex))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)),position ='dodge')+
+  scale_y_continuous(name = "Percentage", labels=percent)+
+  theme_few()
+```
+
+```{r}
+##Plotting embarkment and passenger class
+ggplot(adulttable, aes(Embarked, fill=factor(Pclass))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)),position ='dodge')+
+  scale_y_continuous(name = "Percentage", labels=percent)+
+  theme_few()
+```
+
+
+
+From the graphs, we can verify our hypothesis that passsengers from SouthAmpton had relatively more men and more third class passengers than passengers from other embarkments. 
+
+<!-- ##Distribution of sex across different age groups -->
+
+<!-- ```{r} -->
+<!-- ggplot(full[1:891,], aes(x=Age, fill=factor(Sex)))+ -->
+<!--   geom_histogram(stat="count", position ="stack")  + -->
+<!--   scale_x_continuous(name = 'Age', limits=c(20,45), breaks=c(20:45))+ -->
+<!--   theme_few() -->
+<!-- ``` -->
+
+<!-- #Distribution of family size across port of Embarkment -->
+<!-- ```{r} -->
+<!-- ggplot(adulttable, aes(x = SibSp, y = Parch, fill = Embarked))+ -->
+<!--   geom_bar(stat='identity',position='dodge')+ -->
+<!--   theme_few() -->
+<!-- ``` -->
+
+
+
+##Imputation
+Let us first see the distribution of age variable. 
+
+```{r}
+hist(full$Age, freq=F, main ="Age Distribution", col = 'lightblue') 
+```
+Seems like there were a lot of young adults on the ship.
+Now let's impute values to the missing age values using the 
+rpart method. 
+
+```{r}
+# # Make variables factors into factors
+factor_vars <- c('PassengerId','Pclass','Sex','Embarked')
+ 
+full[factor_vars] <- lapply(full[factor_vars], function(x) as.factor(x))
+ 
+# # Set a random seed
+ set.seed(129)
+ 
+# # Perform mice imputation, excluding certain less-than-useful variables:
+ mice_mod <- mice(full[, !names(full) %in% c('PassengerId','Name','Ticket','Cabin','Fare','Survived')], method='rf') 
+ 
+ mice_output <- complete(mice_mod)
+ 
+ par(mfrow=c(1,2))
+ hist(full$Age, freq=F, main='Age: Original Data', 
+  col='darkgreen', ylim=c(0,0.04))
+ hist(mice_output$Age, freq=F, main='Age: MICE Output', 
+   col='lightgreen', ylim=c(0,0.04))
+ 
+ full$Age <- mice_output$Age
+completedata <- full
+completedata$Embarked[c(62, 830)] <- 'C'
+completedata$Fare[1044] <- median(completedata[completedata$Pclass == '3' & completedata$Embarked == 'S', ]$Fare, na.rm = TRUE)
+
+```
+
+
+<!-- ##Removing missing values for important attributes -->
+
+<!-- ```{r} -->
+<!-- #Use complete cases based on 6 important attributes -->
+<!-- good <- complete.cases(full$Pclass,full$Sex, full$Age, full$Parch, full$SibSp) -->
+<!-- print(nrow(full[good,])) -->
+<!-- completedata <- full[good,] -->
+<!-- table(is.na(full$Cabin)) -->
+<!-- ``` -->
+
+<!-- For now, let's continue our analysis with these number of observations. If needed, we will impute values to increase our sample size.  -->
+
+##Creation of new variable 1 - Age Group
+I am going to classify people into Six different age groups
+- Baby (0-2), toddler(3-6), child (7-12), adolescent (13-18), adult (19-60), elderly(60+)
+
+```{r}
+#Create new variable with different levels
+completedata$ageGroup[completedata$Age<=2] <- "Baby"
+completedata$ageGroup[(completedata$Age >2) & (completedata$Age<= 6)] <- "Toddler"
+completedata$ageGroup[(completedata$Age >6) & (completedata$Age<= 12)] <- "Child"
+completedata$ageGroup[(completedata$Age >12) & (completedata$Age<= 18)] <- "Adolescent"
+completedata$ageGroup[(completedata$Age >18) & (completedata$Age<= 60)] <- "Adult"
+completedata$ageGroup[(completedata$Age >60)] <- "Elderly"
+
+```
+
+##Creation of new variable 2 - Categorizing Women
+
+Before categorizing women, let us see the distribution of age among women. 
+
+```{r}
+##Distribution of age of women
+ggplot(completedata[completedata$Sex == "female", ], aes(x = Age)) + geom_density(fill = '#99d6ff', alpha=0.4) + 
+  geom_vline(aes(xintercept=median(Age)),
+    colour='black', linetype='dashed', lwd=1) +
+  theme_few()
+```
+
+
+
+The filters I am going to use for creating a subgroup of 'Mothers' are
+- Sex is female.
+- No of children greater than zero.
+- No of Spouses equal to one(assuming monogamy)
+- Age greater than 18 and less than 45. 
+
+If the women's age is above 45, her kids would most probably have grown up into adults already. So we will have to exclude women aged above 45. 
+
+```{r}
+#Creation of new attribute
+completedata$Nwomen <- "Other"
+completedata$Nwomen[completedata$Sex == 'female' & completedata$Parch > 0 & completedata$SibSp ==1 & completedata$Age > 18 &  completedata$Age < 45] <- "Mother"
+
+#comparing mothers chances across class
+table(completedata$Nwomen, completedata$Pclass, completedata$Survived)
+
+```
+We can see the rate of survival of mothers is 5/6, 8/9, and 1/3 for first, second and third class respectively. 
+
+##Creation of new variable 3 - Categorizing Men
+We are going to repeat the same process for men as well, categorizing them into fathers and non-fathers. The filters are
+- Sex is male
+- Age is between 18 and 45
+- No of children greater than zero.
+- No of Spouses equal to one
+
+```{r}
+#Creation of new attribute
+completedata$Nmen <- "Other"
+completedata$Nmen[completedata$Sex == 'male' & completedata$Parch > 0 & completedata$SibSp ==1 & completedata$Age > 18 &  completedata$Age < 45] <- "Father"
+```
+
+Let us now see if fathers had more chances of survival. 
+```{r}
+ggplot(completedata, aes(x=Nmen, fill=factor(Survived)))+
+  geom_bar(stat='count', position = 'dodge')+
+  theme_few()
+ferdinora <- c(34,35)
+  
+```
+
+Never expected this output. Seems like it's actually a 
+negative thing to be father. Other men survived better than fathers did. But the sample size of fathers was really small, so we can't really say whether there was no impact on survival if a guy was a father. For now, let's just keep this aside. 
+
+<!-- ##Creation of new variable 4 - Deck ID -->
+
+<!-- From the information about titanic, it is known that the decks from top to bottom were named in the order of A, B, C, D, etc.  -->
+<!-- So I want to check if passengers from lower decks had lesser chances of survival than passengers from higher desks. We need to  -->
+<!-- create the Deck ID variable first.  -->
+
+<!-- ```{r} -->
+<!-- completedata$Deck<-factor(sapply(completedata$Cabin, function(x) strsplit(x, NULL)[[1]][1])) -->
+<!-- ``` -->
+
+##Splitting the dataset for model building
+
+```{r}
+# Factorizing our predictive attributes
+completedata$Pclass <- as.factor(completedata$Pclass)
+completedata$Sex <- as.factor(completedata$Sex)
+completedata$ageGroup <- as.factor(completedata$ageGroup)
+completedata$Nwomen <- as.factor(completedata$Nwomen)
+completedata$Nmen <- as.factor(completedata$Nmen)
+completedata$Survived <- as.factor(completedata$Survived)
+##completedata$Survived <- as.integer(completedata$Survived)
+
+#splitting the dataset
+train <- completedata[1:891,]
+test <- completedata[892:1309,]
+```
+
+##Model building
+```{r} 
+# Set a random seed
+set.seed(759)
+
+# Build the model
+rf_model <- randomForest(factor(Survived) ~ Pclass + Sex + ageGroup + Nwomen + Nmen, data = train) 
+ 
+plot(rf_model)
+legend('topright', colnames(rf_model$err.rate), col=1:3, fill=1:3)
+
+```
+
+##Variable Importance
+```{r}
+# Get importance
+importance    <- importance(rf_model)
+varImportance <- data.frame(Variables = row.names(importance), 
+                            Importance = round(importance[ ,'MeanDecreaseGini'],2))
+
+# Create a rank variable based on importance
+rankImportance <- varImportance %>%
+  mutate(Rank = paste0('#',dense_rank(desc(Importance))))
+
+# Use ggplot2 to visualize the relative importance of variables
+ggplot(rankImportance, aes(x = reorder(Variables, Importance), 
+    y = Importance, fill = Importance)) +
+  geom_bar(stat='identity') + 
+  geom_text(aes(x = Variables, y = 0.5, label = Rank),
+    hjust=0, vjust=0.55, size = 4, colour = 'red') +
+  labs(x = 'Variables') +
+  coord_flip() + 
+  theme_few()
+
+```
+
+##Prediction using test set
+```{r}
+# Predict using the test set
+prediction <- predict(rf_model, test)
+
+# Save the solution to a dataframe with two columns: PassengerId and Survived (prediction)
+solution <- data.frame(PassengerID = test$PassengerId, Survived = prediction)
+
+# Write the solution to file
+write.csv(solution, file = 'resultfinal_vasanth.csv', row.names = F)
+```
+
+
+
+
+
